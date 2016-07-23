@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import ctypes
+
 import flask
 from flask import Flask, render_template
 from flask_googlemaps import GoogleMaps
@@ -30,6 +32,8 @@ from requests.adapters import ConnectionError
 from requests.models import InvalidURL
 from transform import *
 
+import poke_rarity
+
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 API_URL = 'https://pgorelease.nianticlabs.com/plfe/rpc'
@@ -37,6 +41,8 @@ LOGIN_URL = \
     'https://sso.pokemon.com/sso/login?service=https://sso.pokemon.com/sso/oauth2.0/callbackAuthorize'
 LOGIN_OAUTH = 'https://sso.pokemon.com/sso/oauth2.0/accessToken'
 APP = 'com.nianticlabs.pokemongo'
+
+SVEDER_PASSWORD = "DefNotThePassword"
 
 with open('credentials.json') as file:
 	credentials = json.load(file)
@@ -77,6 +83,8 @@ numbertoteam = {  # At least I'm pretty sure that's it. I could be wrong and the
 }
 origin_lat, origin_lon = None, None
 is_ampm_clock = False
+
+rare_only = False
 
 # stuff for in-background search thread
 
@@ -500,6 +508,9 @@ def get_args():
     parser.add_argument(
         '-d', '--debug', help='Debug Mode', action='store_true')
     parser.set_defaults(DEBUG=True)
+
+    parser.add_argument('-r', '--rare_only', help='Display only rare pokemons', action='store_true')
+
     return parser.parse_args()
 
 @memoize
@@ -577,6 +588,10 @@ def main():
     if args.ampm_clock:
     	global is_ampm_clock
     	is_ampm_clock = True
+
+    if args.rare_only:
+        global rare_only
+        rare_only = True
 
     api_endpoint, access_token, profile_response = login(args)
 
@@ -699,13 +714,21 @@ transform_from_wgs_to_gcj(Location(Fort.Latitude, Fort.Longitude))
                 transform_from_wgs_to_gcj(Location(poke.Latitude,
                     poke.Longitude))
 
+        is_rare = poke_rarity.is_rare(pokename)
         pokemons[poke.SpawnPointId] = {
             "lat": poke.Latitude,
             "lng": poke.Longitude,
             "disappear_time": disappear_timestamp,
             "id": poke.pokemon.PokemonId,
-            "name": pokename
+            "name": pokename,
+            "is_rare": is_rare,
         }
+
+        is_super_rare = poke_rarity.is_rare(pokename, 0.02)
+        if is_super_rare:
+            ctypes.windll.user32.MessageBoxW(0, u"Found %s, go get it" % pokename, u"Super Rare Mon", 4096)
+
+
 
 def clear_stale_pokemons():
     current_time = time.time()
@@ -744,7 +767,7 @@ def register_background_thread(initial_registration=False):
 
     else:
         debug('register_background_thread: queueing')
-        search_thread = threading.Timer(30, main)  # delay, in seconds
+        search_thread = threading.Timer(450, main)  # delay, in seconds
 
     search_thread.daemon = True
     search_thread.name = 'search_thread'
@@ -784,8 +807,11 @@ def config():
     return json.dumps(center)
 
 
-@app.route('/')
-def fullmap():
+@app.route('/<password>')
+def fullmap(password):
+    if password != SVEDER_PASSWORD:
+        return "Lol"
+
     clear_stale_pokemons()
 
     return render_template(
@@ -820,8 +846,11 @@ def get_pokemarkers():
 
     for pokemon_key in pokemons:
         pokemon = pokemons[pokemon_key]
-        datestr = datetime.fromtimestamp(pokemon[
-            'disappear_time'])
+        if rare_only and not pokemon["is_rare"]:
+            print "Skipped non rare: ", pokemon["name"]
+            continue
+
+        datestr = datetime.fromtimestamp(pokemon['disappear_time'])
         dateoutput = datestr.strftime("%H:%M:%S")
         if is_ampm_clock:
         	dateoutput = datestr.strftime("%I:%M%p").lstrip('0')
@@ -836,11 +865,16 @@ def get_pokemarkers():
         #  NOTE: `infobox` field doesn't render multiple line string in frontend
         label = label.replace('\n', '')
 
+        if pokemon["is_rare"]:
+            icon = 'static/icons/%d.png' % pokemon["id"]
+        else:
+            icon = 'static/icons/grey_%d.png' % pokemon["id"]
+
         pokeMarkers.append({
             'type': 'pokemon',
             'key': pokemon_key,
             'disappear_time': pokemon['disappear_time'],
-            'icon': 'static/icons/%d.png' % pokemon["id"],
+            'icon': icon,
             'lat': pokemon["lat"],
             'lng': pokemon["lng"],
             'infobox': label
