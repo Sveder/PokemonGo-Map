@@ -10,7 +10,10 @@ POKE_RARITY = {'Oddish': '1.22', 'Weezing': '0.01', 'Magikarp': '0.07', 'Jynx': 
 RARE_UNDER_PERCENT = 1 # Under what percentage is a pokemon considered rare.
 
 def is_rare(pokemon_name, rare_under_percent=RARE_UNDER_PERCENT):
-    return float(POKE_RARITY[pokemon_name]) < rare_under_percent
+    try:
+        return float(POKE_RARITY[pokemon_name]) < rare_under_percent
+    except:
+        return True
 
 
 # This basically takes the data from the table in the url above and parses it to get pokemon names. For now I did it
