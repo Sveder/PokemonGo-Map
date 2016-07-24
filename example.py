@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import ctypes
+import pymsgbox
 
 import flask
 from flask import Flask, render_template
@@ -33,6 +33,7 @@ from requests.models import InvalidURL
 from transform import *
 
 import poke_rarity
+import sqlite3
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -84,7 +85,7 @@ numbertoteam = {  # At least I'm pretty sure that's it. I could be wrong and the
 origin_lat, origin_lon = None, None
 is_ampm_clock = False
 
-rare_only = False
+alert_on_rare = False
 
 # stuff for in-background search thread
 
@@ -509,7 +510,7 @@ def get_args():
         '-d', '--debug', help='Debug Mode', action='store_true')
     parser.set_defaults(DEBUG=True)
 
-    parser.add_argument('-r', '--rare_only', help='Display only rare pokemons', action='store_true')
+    parser.add_argument('-r', '--alert-rare', help='Pop up a message box on rare mon', action='store_true')
 
     return parser.parse_args()
 
@@ -589,9 +590,9 @@ def main():
     	global is_ampm_clock
     	is_ampm_clock = True
 
-    if args.rare_only:
-        global rare_only
-        rare_only = True
+    if args.alert_rare:
+        global alert_on_rare
+        alert_on_rare = True
 
     api_endpoint, access_token, profile_response = login(args)
 
@@ -724,11 +725,24 @@ transform_from_wgs_to_gcj(Location(Fort.Latitude, Fort.Longitude))
             "is_rare": is_rare,
         }
 
+        add_poke_to_db(pokeid, disappear_timestamp, poke.Latitude, poke.Longitude)
+
         is_super_rare = poke_rarity.is_rare(pokename, 0.02)
-        if is_super_rare:
-            ctypes.windll.user32.MessageBoxW(0, u"Found %s, go get it" % pokename, u"Super Rare Mon", 4096)
+        if is_super_rare and alert_on_rare:
+            def pop_message():
+                pymsgbox.alert(text=u"Found %s, go get it" % pokename, title=u"Super Rare Mon")
+
+            threading.Thread(target=pop_message).start()
 
 
+def add_poke_to_db(poke_id, disappears_at, lat, lng):
+    sqlite_conn = sqlite3.connect("poke_data.db")
+    sqlite_cursor = sqlite_conn.cursor()
+
+    sqlite_cursor.execute("INSERT INTO sighting VALUES (NULL, %s, %s, %s, %s, %s)"
+                          % (poke_id, time.time(), disappears_at, lat, lng))
+    sqlite_conn.commit()
+    sqlite_conn.close()
 
 def clear_stale_pokemons():
     current_time = time.time()
@@ -846,9 +860,6 @@ def get_pokemarkers():
 
     for pokemon_key in pokemons:
         pokemon = pokemons[pokemon_key]
-        if rare_only and not pokemon["is_rare"]:
-            print "Skipped non rare: ", pokemon["name"]
-            continue
 
         datestr = datetime.fromtimestamp(pokemon['disappear_time'])
         dateoutput = datestr.strftime("%H:%M:%S")
